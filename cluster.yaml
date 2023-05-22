@@ -1,0 +1,7 @@
+- hosts: mysql_cluster
+  vars_files:
+    - vars.yaml
+  roles:
+    - hostname
+    - mysql_server
+    - haproxy

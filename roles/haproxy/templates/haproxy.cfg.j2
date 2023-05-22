@@ -1,0 +1,50 @@
+global
+    maxconn {{ haproxy_maxconn.global }}
+    log /dev/log    local0
+    log /dev/log    local1 notice
+    stats socket /run/haproxy/admin.sock mode 660 level admin expose-fd listeners
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    external-check
+    # insecure-fork-wanted
+    daemon
+
+defaults
+    mode               tcp
+    log                global
+    retries            2
+    timeout queue      5s
+    timeout connect    5s
+    timeout client     {{ haproxy_timeout.client }}
+    timeout server     {{ haproxy_timeout.server }}
+    timeout check      15s
+
+listen stats
+    mode http
+    bind {{ hostvars[inventory_hostname]['inventory_hostname'] }}:{{ haproxy_listen_port.stats }}
+    stats enable
+    stats uri /
+
+listen master
+    bind {{ hostvars[inventory_hostname]['inventory_hostname'] }}:{{ haproxy_listen_port.master }}
+    maxconn {{ haproxy_maxconn.master }}
+    mode tcp
+    option tcpka
+    option external-check
+    external-check command /var/lib/haproxy/check/check_rw.sh
+  {% for host in groups['mysql_cluster'] %}
+server {{ hostvars[host]['ansible_hostname'] }} {{ hostvars[host]['inventory_hostname'] }}:{{ mysql_port }} check inter 5s fall 1 rise 1
+  {% endfor %}
+
+listen replicas
+    bind {{ hostvars[inventory_hostname]['inventory_hostname'] }}:{{ haproxy_listen_port.replicas }}
+    maxconn {{ haproxy_maxconn.replica }}
+    mode tcp
+    option tcpka
+    option external-check
+    external-check command /var/lib/haproxy/check/check_ro.sh
+    balance roundrobin
+  {% for host in groups['mysql_cluster'] %}
+server {{ hostvars[host]['ansible_hostname'] }} {{ hostvars[host]['inventory_hostname'] }}:{{ mysql_port }} check inter 5s fall 1 rise 1
+  {% endfor %}

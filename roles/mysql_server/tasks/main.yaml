@@ -1,0 +1,114 @@
+- name: Set swappiness
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: '1'
+    state: present
+
+- name: Remove
+  ansible.builtin.apt:
+    pkg:
+      - mysql-server
+      - mysql-client
+      - python3-pip
+      - python3-dev
+      - libmysqlclient-dev
+    state: absent
+    purge: true
+    autoremove: yes
+
+- name: Clean
+  command: rm -r /etc/mysql
+  ignore_errors: yes
+
+- name: Clean
+  command: rm -r /var/lib/mysql
+  ignore_errors: yes
+
+- name: Clean
+  command: rm -r /var/log/mysql
+  ignore_errors: yes
+
+- name: Install MySQL server and client
+  ansible.builtin.apt:
+    pkg:
+      - mysql-server
+      - mysql-client
+      - python3-pip
+      - python3-dev
+      - libmysqlclient-dev
+    update_cache: yes
+
+- name: Install pip dependencies
+  pip:
+    name: mysqlclient
+
+- name: Removes all anonymous user accounts
+  community.mysql.mysql_user:
+    name: ''
+    host: yes
+    state: absent
+    sql_log_bin: no
+
+- name: Create replication user
+  community.mysql.mysql_user:
+    name: 'repl'
+    password: '{{ mysql_repl_password }}'
+    host: '%'
+    state: present
+    priv: "*.*:REPLICATION SLAVE"
+    sql_log_bin: no
+
+- name: Create monitor user
+  community.mysql.mysql_user:
+    name: 'haproxy'
+    host: '%'
+    password: 'mysql_native_password'
+    state: present
+    sql_log_bin: no
+
+- name: Clear monitor user password
+  community.mysql.mysql_query:
+    query: "set password for haproxy@'%'='';"
+
+- name: Create config
+  ansible.builtin.template:
+    src: templates/mysqld.cnf
+    dest: /etc/mysql/mysql.conf.d/mysqld.cnf
+    owner: root
+    group: root
+
+- name: Restart MySQL Server
+  ansible.builtin.systemd:
+    state: restarted
+    name: mysql
+
+- name: Set replication source
+  community.mysql.mysql_query:
+    query: "CHANGE REPLICATION SOURCE TO SOURCE_USER='repl', SOURCE_PASSWORD='{{ mysql_repl_password }}' FOR CHANNEL 'group_replication_recovery';"
+
+- name: Enable group bootstrap
+  community.mysql.mysql_variables:
+    variable: group_replication_bootstrap_group
+    value: 'ON'
+    mode: persist
+  when: inventory_hostname in groups['master']
+
+- name: Start replication
+  community.mysql.mysql_query:
+    query: 'START GROUP_REPLICATION;'
+  when: inventory_hostname in groups['master']
+
+- name: Disable group bootstrap
+  community.mysql.mysql_variables:
+    variable: group_replication_bootstrap_group
+    value: 'OFF'
+    mode: persist
+  when: inventory_hostname in groups['master']
+
+- name: Start replication
+  community.mysql.mysql_query:
+    query: 'START GROUP_REPLICATION;'
+  when: inventory_hostname in groups['replica']
+
+# - name: Sets the root password 
+#   mysql_user: user=root password="{{ mysql_root_password }}" host=localhost
